@@ -177,7 +177,7 @@ function Dashboard({ user, onLogout }) {
       </aside>
 
       {/* Main Content */}
-      <main className={`ml-${sidebarOpen ? '64' : '20'} transition-all duration-300`}>
+      <main className={`${sidebarOpen ? 'ml-64' : 'ml-20'} transition-all duration-300`}>
         {/* Header */}
         <header className={`${darkMode ? 'bg-gray-800' : 'bg-white'} shadow-lg sticky top-0 z-40`}>
           <div className="px-8 py-4 flex items-center justify-between">
@@ -298,10 +298,10 @@ function Dashboard({ user, onLogout }) {
               <table className="w-full">
                 <thead>
                   <tr className={`${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider {darkMode ? 'text-gray-300' : 'text-gray-600'}">User</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider {darkMode ? 'text-gray-300' : 'text-gray-600'}">Email</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider {darkMode ? 'text-gray-300' : 'text-gray-600'}">Role</th>
-                    <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider {darkMode ? 'text-gray-300' : 'text-gray-600'}">Joined</th>
+                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>User</th>
+                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Email</th>
+                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Role</th>
+                    <th className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>Joined</th>
                   </tr>
                 </thead>
                 <tbody className={`${darkMode ? 'divide-gray-700' : 'divide-gray-200'} divide-y`}>
