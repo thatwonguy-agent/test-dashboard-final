@@ -6,6 +6,7 @@ A stunning, fully-functional analytics dashboard built with modern technologies.
 ![React](https://img.shields.io/badge/React-18.2.0-61dafb)
 ![Node](https://img.shields.io/badge/Node.js-20.0.0-green)
 ![Docker](https://img.shields.io/badge/Docker-Latest-blue)
+![CI/CD](https://github.com/thatwonguy-agent/test-dashboard-final/actions/workflows/ci.yml/badge.svg)
 
 ## ✨ Features
 
@@ -17,6 +18,7 @@ A stunning, fully-functional analytics dashboard built with modern technologies.
 - 🌙 **Dark/Light Mode** - Toggle between themes instantly
 - 📱 **Fully Responsive** - Works on mobile, tablet, and desktop
 - 🐳 **Docker Ready** - One-command deployment with docker-compose
+- 🔄 **CI/CD Pipeline** - Automated testing and deployment
 
 ## 🛠️ Tech Stack
 
