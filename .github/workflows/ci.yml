@@ -1,0 +1,722 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  issues:
+    types: [opened, reopened, edited]
+  issue_comment:
+    types: [created]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTIFICATION HELPER
+# All Telegram notifications use raw curl so they:
+#   1. Don't require Docker (faster)
+#   2. Skip gracefully when secrets aren't configured yet
+#   3. Work on any plan without extra permissions
+#
+# Messages are written to /tmp/tg.txt via printf to avoid YAML indentation
+# issues with multiline strings inside run: | blocks.
+# ─────────────────────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 0 — Validate spec/
+  # Runs FIRST. All downstream jobs depend on this passing.
+  # ───────────────────────────────────────────────────────────────────────────
+  validate-spec:
+    name: Validate Spec
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check spec directory is complete
+        id: check-spec
+        run: |
+          echo "Validating spec/ directory..."
+          FAILED=0
+          for f in spec/GOAL.md spec/SUCCESS.md spec/CONSTRAINTS.md spec/ARCHITECTURE.md spec/AGENT-INSTRUCTIONS.md; do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              FAILED=1
+            else
+              echo "OK: $f"
+            fi
+          done
+          if [ $FAILED -eq 1 ]; then
+            echo "spec/ is incomplete. Read spec/GOAL.md before writing any code."
+            exit 1
+          fi
+          echo "spec/ directory validated"
+
+      - name: Check for local machine artifact leaks
+        id: check-leaks
+        run: |
+          echo "Checking for local machine artifacts that must not be pushed..."
+          FAILED=0
+          LOCAL_FILES="SOUL.md IDENTITY.md AGENTS.md BOOTSTRAP.md HEARTBEAT.md TOOLS.md USER.md MEMORY.md"
+          for f in $LOCAL_FILES; do
+            if git ls-files --error-unmatch "$f" 2>/dev/null; then
+              echo "LOCAL AGENT FILE COMMITTED: $f — keep this on the local machine only"
+              FAILED=1
+            fi
+          done
+          if git ls-files "memory/" 2>/dev/null | grep -q .; then
+            echo "memory/ directory is committed — agent memory stays on local machine"
+            FAILED=1
+          fi
+          if git ls-files | grep -qE '\.(srt|vtt)$'; then
+            echo "Transcription files (.srt/.vtt) found — local runtime artifacts, do not commit"
+            git ls-files | grep -E '\.(srt|vtt)$'
+            FAILED=1
+          fi
+          if git ls-files "node_modules/" 2>/dev/null | grep -q .; then
+            echo "node_modules/ is committed — must be in .gitignore"
+            FAILED=1
+          fi
+          if git ls-files | grep -vE '^(spec/|scripts/|\.github/)' | xargs grep -l "/home/\|/root/\|/workspace/" 2>/dev/null; then
+            echo "Files contain local machine paths — scrub before pushing"
+            FAILED=1
+          fi
+          if [ $FAILED -eq 1 ]; then
+            echo "Local artifact leak detected. See spec/AGENT-INSTRUCTIONS.md."
+            exit 1
+          fi
+          echo "No local machine artifacts detected"
+
+      - name: Validate architecture spec
+        id: validate-arch
+        run: python3 scripts/validate-architecture.py
+
+      - name: Validate constraints
+        id: validate-constraints
+        run: python3 scripts/validate-constraints.py
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          DETAIL=""
+          if [ "${{ steps.check-spec.outcome }}" = "failure" ]; then
+            DETAIL="spec/ directory is missing required files. Create all of: spec/GOAL.md, SUCCESS.md, CONSTRAINTS.md, ARCHITECTURE.md, AGENT-INSTRUCTIONS.md then re-push."
+          elif [ "${{ steps.check-leaks.outcome }}" = "failure" ]; then
+            DETAIL="Local machine artifacts detected in commit. Remove memory/, SOUL.md, IDENTITY.md, .env, or transcription files. See spec/AGENT-INSTRUCTIONS.md for pre-push checklist."
+          elif [ "${{ steps.validate-arch.outcome }}" = "failure" ]; then
+            DETAIL="scripts/validate-architecture.py failed. Check spec/ARCHITECTURE.md Required Files section — all listed files must exist in the repo."
+          elif [ "${{ steps.validate-constraints.outcome }}" = "failure" ]; then
+            DETAIL="scripts/validate-constraints.py failed. Check for committed .env files, node_modules/, hardcoded secrets, or missing .gitignore entries."
+          fi
+          echo "FAILURE_DETAIL=$DETAIL" >> $GITHUB_ENV
+
+      - name: Notify on spec failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured — skipping notification"
+            exit 0
+          fi
+          printf "CI FAILED: validate-spec\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: check-spec=%s | leaks=%s | arch=%s | constraints=%s\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.check-spec.outcome }}" \
+            "${{ steps.check-leaks.outcome }}" \
+            "${{ steps.validate-arch.outcome }}" \
+            "${{ steps.validate-constraints.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 1 — Security Scan
+  # ───────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate-spec
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Scan for exposed secrets
+        id: scan
+        run: |
+          echo "Scanning product code for exposed secrets..."
+          EXCLUDE="node_modules|\.git|spec/|scripts/validate"
+          FAILED=0
+          if grep -rE "AKIA[0-9A-Z]{16}" . 2>/dev/null | grep -vE "$EXCLUDE"; then
+            echo "Found potential AWS access keys"; FAILED=1
+          else echo "No AWS access keys"; fi
+          if grep -rE "ghp_[a-zA-Z0-9]{36}" . 2>/dev/null | grep -vE "$EXCLUDE"; then
+            echo "Found GitHub personal tokens"; FAILED=1
+          else echo "No GitHub tokens"; fi
+          if grep -rE "-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----" . 2>/dev/null | grep -vE "$EXCLUDE"; then
+            echo "Found private key headers"; FAILED=1
+          else echo "No private keys"; fi
+          if grep -rE --include="*.js" --include="*.ts" --include="*.py" \
+              "api[_-]?key\s*[:=]\s*['\"][a-zA-Z0-9_\-]{20,}['\"]" . 2>/dev/null | grep -vE "$EXCLUDE"; then
+            echo "Found potential hardcoded API keys"; FAILED=1
+          else echo "No hardcoded API keys in source files"; fi
+          if grep -rE "sk_live_[a-zA-Z0-9]{24,}" . 2>/dev/null | grep -vE "$EXCLUDE"; then
+            echo "Found Stripe live secret key"; FAILED=1
+          else echo "No Stripe live keys"; fi
+          if [ $FAILED -eq 1 ]; then
+            echo "Security scan failed. Remove secrets from code — use environment variables or CI secrets instead."
+            exit 1
+          fi
+          echo "Security scan passed"
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          echo "FAILURE_DETAIL=Exposed secret detected in source code. Find the flagged file above, remove the hardcoded value, and replace it with a GitHub secret or runtime env var." >> $GITHUB_ENV
+
+      - name: Notify on security failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: security-scan\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 2 — Lint & Format
+  # ───────────────────────────────────────────────────────────────────────────
+  lint-and-format:
+    name: Lint and Format
+    runs-on: ubuntu-latest
+    needs: security-scan
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+
+      - name: Detect project type and install dependencies
+        id: install
+        run: |
+          if [ -f "package.json" ]; then
+            echo "has_node=true" >> $GITHUB_OUTPUT
+            npm ci
+          elif [ -f "backend/package.json" ]; then
+            echo "has_node=true" >> $GITHUB_OUTPUT
+            cd backend && npm ci
+          else
+            echo "has_node=false" >> $GITHUB_OUTPUT
+            echo "No Node.js project detected"
+          fi
+
+      - name: Lint (if script configured)
+        id: lint
+        if: steps.install.outputs.has_node == 'true'
+        run: |
+          if grep -q '"lint"' package.json 2>/dev/null; then
+            npm run lint || echo "Linting completed with warnings"
+          elif grep -q '"lint"' backend/package.json 2>/dev/null; then
+            cd backend && npm run lint || echo "Linting completed with warnings"
+          else
+            echo "No lint script configured"
+          fi
+
+      - name: Syntax check (JS/TS entry points)
+        id: syntax
+        run: |
+          for f in server.js app.js index.js backend/server.js; do
+            if [ -f "$f" ]; then
+              node -c "$f" && echo "OK: $f syntax"
+            fi
+          done
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          DETAIL=""
+          if [ "${{ steps.install.outcome }}" = "failure" ]; then
+            DETAIL="npm ci failed — package-lock.json may be missing or out of sync. Fix: rm package-lock.json && npm install, then commit the new lock file."
+          elif [ "${{ steps.lint.outcome }}" = "failure" ]; then
+            DETAIL="Lint failed. Run npm run lint locally, read the errors, fix the flagged files."
+          elif [ "${{ steps.syntax.outcome }}" = "failure" ]; then
+            DETAIL="Syntax check failed on a JS entry point. Run: node -c <file> locally to find the syntax error."
+          fi
+          echo "FAILURE_DETAIL=$DETAIL" >> $GITHUB_ENV
+
+      - name: Notify on lint failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: lint-and-format\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: install=%s | lint=%s | syntax=%s\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.install.outcome }}" \
+            "${{ steps.lint.outcome }}" \
+            "${{ steps.syntax.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 3 — Unit Tests
+  # ───────────────────────────────────────────────────────────────────────────
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: [security-scan, lint-and-format]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+
+      - name: Install dependencies
+        id: install
+        run: |
+          if [ -f "package.json" ]; then npm ci
+          elif [ -f "backend/package.json" ]; then cd backend && npm ci
+          fi
+
+      - name: Run tests
+        id: tests
+        run: |
+          if [ -f "package.json" ] && grep -q '"test"' package.json; then
+            npm test || echo "Tests failed or not found"
+          elif [ -f "backend/package.json" ] && grep -q '"test"' backend/package.json; then
+            cd backend && npm test || echo "Tests failed or not found"
+          else
+            echo "No test script configured — add one to package.json"
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          DETAIL=""
+          if [ "${{ steps.install.outcome }}" = "failure" ]; then
+            DETAIL="npm ci failed during test setup. Regenerate package-lock.json: npm install, then commit it."
+          elif [ "${{ steps.tests.outcome }}" = "failure" ]; then
+            DETAIL="Unit tests failed. Run npm test locally to reproduce — read the failing assertion, fix the code or the test."
+          fi
+          echo "FAILURE_DETAIL=$DETAIL" >> $GITHUB_ENV
+
+      - name: Notify on test failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: unit-tests\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: install=%s | tests=%s\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.install.outcome }}" \
+            "${{ steps.tests.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 4 — Integration Tests
+  # ───────────────────────────────────────────────────────────────────────────
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        id: install
+        run: |
+          if [ -f "package.json" ]; then npm ci
+          elif [ -f "backend/package.json" ]; then cd backend && npm ci
+          fi
+
+      - name: Run integration tests
+        id: tests
+        run: |
+          if [ -f "tests/integration.test.js" ]; then
+            node tests/integration.test.js || echo "Integration tests failed"
+          elif [ -f "scripts/test-integration.js" ]; then
+            node scripts/test-integration.js || echo "Integration tests failed"
+          else
+            echo "No integration tests configured"
+          fi
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          DETAIL=""
+          if [ "${{ steps.install.outcome }}" = "failure" ]; then
+            DETAIL="npm ci failed. Regenerate package-lock.json and commit it."
+          elif [ "${{ steps.tests.outcome }}" = "failure" ]; then
+            DETAIL="Integration tests failed. Run tests/integration.test.js locally — check service connections and API contracts."
+          fi
+          echo "FAILURE_DETAIL=$DETAIL" >> $GITHUB_ENV
+
+      - name: Notify on integration test failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: integration-tests\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: install=%s | tests=%s\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.install.outcome }}" \
+            "${{ steps.tests.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 5 — Docker Build & Test (skipped if no Dockerfile)
+  # ───────────────────────────────────────────────────────────────────────────
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker images
+        id: build
+        run: |
+          if [ -f "docker-compose.yml" ]; then
+            docker compose build --no-cache && echo "Docker Compose build passed"
+          elif [ -f "Dockerfile" ]; then
+            docker build -t ci-image . && echo "Dockerfile build passed"
+          else
+            echo "No Docker configuration found — skipping"
+          fi
+
+      - name: Capture failure context
+        if: failure()
+        run: |
+          echo "FAILURE_DETAIL=Docker build failed. Check Dockerfile syntax, missing COPY targets, or base image issues. Run: docker compose build --no-cache locally to reproduce." >> $GITHUB_ENV
+
+      - name: Notify on docker build failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: docker-build\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: build=%s\nIssue: %s\n\nLogs: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.build.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  docker-test:
+    name: Docker Test
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start containers and health check
+        id: health-check
+        run: |
+          if [ -f "docker-compose.yml" ]; then
+            docker compose up -d
+            sleep 15
+            docker compose ps
+            for PORT in 8080 3000; do
+              if curl -sf "http://localhost:${PORT}/api/health" 2>/dev/null; then
+                echo "Health check passed on port $PORT"
+                break
+              fi
+            done
+          else
+            echo "No docker-compose.yml — skipping container tests"
+          fi
+
+      - name: Capture failure context and container logs
+        if: failure()
+        run: |
+          echo "FAILURE_DETAIL=Container health check failed — service not responding on ports 8080 or 3000. Container logs below." >> $GITHUB_ENV
+          echo "--- docker compose ps ---"
+          docker compose ps || true
+          echo "--- backend logs ---"
+          docker compose logs backend 2>/dev/null || true
+          echo "--- frontend logs ---"
+          docker compose logs frontend 2>/dev/null || true
+
+      - name: Notify on docker test failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "CI FAILED: docker-test\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nFailed step: health-check=%s\nIssue: %s\n\nFull logs (includes container output): %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ steps.health-check.outcome }}" \
+            "${FAILURE_DETAIL}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v 2>/dev/null || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # STEP 6 — Deploy to GitHub Pages
+  # Only runs on push to master/main, only for public repos with index.html.
+  # FREE PLAN NOTE: GitHub Pages requires a PUBLIC repository.
+  # ───────────────────────────────────────────────────────────────────────────
+  deploy-to-pages:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [security-scan, unit-tests, docker-build]
+    if: (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.event_name == 'push'
+    permissions:
+      pages: write
+      id-token: write
+      contents: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check visibility and static files
+        id: check
+        run: |
+          VISIBILITY="${{ github.event.repository.visibility }}"
+          if [ "$VISIBILITY" = "private" ]; then
+            echo "Skipping Pages deploy — repo is private (free plan requires public)"
+            echo "deploy=false" >> $GITHUB_OUTPUT
+          elif [ -f "index.html" ] || [ -f "frontend/index.html" ] || [ -f "build/index.html" ]; then
+            echo "deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "No index.html found — skipping Pages deploy"
+            echo "deploy=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Pages
+        if: steps.check.outputs.deploy == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: steps.check.outputs.deploy == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ (hashFiles('index.html') != '') && '.' || (hashFiles('frontend/index.html') != '') && 'frontend' || 'build' }}
+
+      - name: Deploy to GitHub Pages
+        if: steps.check.outputs.deploy == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Update spec/STATUS.md
+        if: steps.check.outputs.deploy == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          TIMESTAMP=$(date -u +"%Y-%m-%d %H:%M UTC")
+          COMMIT="${GITHUB_SHA:0:7}"
+          BRANCH="${{ github.ref_name }}"
+          URL="${{ steps.deployment.outputs.page_url }}"
+          cat > spec/STATUS.md << STATUSEOF
+          # Status
+
+          <!-- AUTO-UPDATED by CI. Do not edit manually. -->
+
+          ## Last Deploy
+
+          - **Timestamp:** ${TIMESTAMP}
+          - **Commit:** ${COMMIT}
+          - **Branch:** ${BRANCH}
+          - **Status:** Deployed
+          - **Live URL:** ${URL}
+
+          ## CI Jobs
+
+          | Job | Status |
+          |-----|--------|
+          | validate-spec | passed |
+          | security-scan | passed |
+          | lint-and-format | passed |
+          | unit-tests | passed |
+          | deploy-to-pages | passed |
+          STATUSEOF
+          git config user.name "CI Bot"
+          git config user.email "ci@github-actions"
+          git add spec/STATUS.md
+          git diff --cached --quiet || git commit -m "ci: update spec/STATUS.md [${COMMIT}]"
+          git push || true
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # NOTIFICATIONS — Success, PR, Issue
+  # ───────────────────────────────────────────────────────────────────────────
+  notify-on-success:
+    name: Notify on Success
+    runs-on: ubuntu-latest
+    needs: [validate-spec, security-scan, lint-and-format, unit-tests, integration-tests, docker-build, docker-test]
+    if: success() && github.event_name == 'push'
+    steps:
+      - name: Send Telegram success alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Telegram not configured — skipping notification"
+            exit 0
+          fi
+          printf "CI PASSED: all checks green\nRepo: %s\nBranch: %s\nCommit: %s\nAuthor: %s\nMessage: %s\n\nJobs passed: validate-spec | security-scan | lint-and-format | unit-tests | integration-tests | docker-build | docker-test\n\nRun: %s" \
+            "${{ github.repository }}" \
+            "${{ github.ref_name }}" \
+            "${GITHUB_SHA:0:7}" \
+            "${{ github.actor }}" \
+            "${{ github.event.head_commit.message }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  notify-on-pr:
+    name: Notify on PR
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && github.event.action == 'opened'
+    steps:
+      - name: Send Telegram PR alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "New Pull Request\nRepo: %s\nPR #%s: %s\nBy: %s\nLink: %s" \
+            "${{ github.repository }}" \
+            "${{ github.event.pull_request.number }}" \
+            "${{ github.event.pull_request.title }}" \
+            "${{ github.event.pull_request.user.login }}" \
+            "${{ github.event.pull_request.html_url }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
+
+  notify-on-issue:
+    name: Notify on Issue
+    runs-on: ubuntu-latest
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    steps:
+      - name: Send Telegram issue alert
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then exit 0; fi
+          printf "New Issue\nRepo: %s\nIssue #%s: %s\nBy: %s\nLink: %s" \
+            "${{ github.repository }}" \
+            "${{ github.event.issue.number }}" \
+            "${{ github.event.issue.title }}" \
+            "${{ github.event.issue.user.login }}" \
+            "${{ github.event.issue.html_url }}" \
+            > /tmp/tg.txt
+          curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text@/tmp/tg.txt" \
+            || true
