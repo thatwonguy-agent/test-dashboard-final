@@ -1,5 +1,5 @@
 # 🚀 Test Dashboard
-
+- model: qwen3.5-27B model was given instructions to built a functional clickable frontend/backend website... this is what it came up with, through multiple iterations, not one-shotted.
 A stunning, fully-functional analytics dashboard built with modern technologies. Experience the future of data visualization.
 
 ![Status](https://img.shields.io/badge/Status-Production-ready-brightgreen)
