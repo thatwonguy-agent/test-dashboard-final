@@ -1,149 +1,254 @@
-# Agent Template
+# 🚀 Test Dashboard
 
-General-purpose template for AI agent → GitHub product pipelines.
-Works for any org or client. Every new repo is generated from this template.
+A stunning, fully-functional analytics dashboard built with modern technologies. Experience the future of data visualization.
 
-> **Human docs are here. Machine source of truth is in [`spec/`](./spec/).**
+![Status](https://img.shields.io/badge/Status-Production-ready-brightgreen)
+![React](https://img.shields.io/badge/React-18.2.0-61dafb)
+![Node](https://img.shields.io/badge/Node.js-20.0.0-green)
+![Docker](https://img.shields.io/badge/Docker-Latest-blue)
 
----
+## ✨ Features
 
-## Quick Start (Agent Workflow)
+- 🎨 **Glass Morphism UI** - Modern, translucent design with gradient effects
+- 📊 **Real-time Analytics** - Interactive charts with live data updates
+- 🔐 **JWT Authentication** - Secure login with token-based auth
+- 👥 **User Management** - Full CRUD operations for user accounts
+- 📤 **Export to CSV** - Download analytics data (NEW!)
+- 🌙 **Dark/Light Mode** - Toggle between themes instantly
+- 📱 **Fully Responsive** - Works on mobile, tablet, and desktop
+- 🐳 **Docker Ready** - One-command deployment with docker-compose
 
-```
-1. Read spec/GOAL.md FIRST — always
-2. Read spec/ARCHITECTURE.md — understand the stack
-3. Write code that meets spec/SUCCESS.md criteria
-4. Push → CI validates spec → build → deploy
-5. Read CI result; if failed re-read spec and fix
-6. Never skip step 1
-```
+## 🛠️ Tech Stack
 
----
+### Frontend
+- React 18.2.0
+- Tailwind CSS
+- Recharts (data visualization)
+- Axios (HTTP client)
+- React Router
 
-## Spec Directory (Source of Truth)
+### Backend
+- Node.js 20
+- Express.js
+- better-sqlite3 (SQLite database)
+- bcryptjs (password hashing)
+- jsonwebtoken (JWT auth)
 
-| File | Purpose |
-|------|---------|
-| [`spec/GOAL.md`](./spec/GOAL.md) | Goal + Definition of Done (agent reads first, always) |
-| [`spec/SUCCESS.md`](./spec/SUCCESS.md) | Measurable pass/fail criteria CI checks against |
-| [`spec/CONSTRAINTS.md`](./spec/CONSTRAINTS.md) | Hard rules agent cannot violate |
-| [`spec/ARCHITECTURE.md`](./spec/ARCHITECTURE.md) | Exact stack, files, what each does |
-| [`spec/STATUS.md`](./spec/STATUS.md) | Auto-updated by CI after every deploy |
+### Infrastructure
+- Docker + Docker Compose
+- GitHub Actions (CI/CD)
 
-CI enforces: **spec must pass before build, test, or deploy runs.**
+## 🚀 Quick Start
 
----
+### Prerequisites
+- Docker & Docker Compose
+- Node.js 20+ (for local development)
 
-## CI/CD Pipeline
-
-```
-validate-spec  ←── runs FIRST, fails everything if spec/ is broken
-     ↓
-security-scan
-     ↓
-lint-and-format
-     ↓
-unit-tests → integration-tests
-     ↓
-docker-build → docker-test
-     ↓
-deploy-to-pages  (public repos only — free plan limitation)
-     ↓
-notify (Telegram: ✅ pass / ❌ fail / 🔀 PR / 🐛 issue)
-```
-
-**Triggers:** Push to `master`/`main`, pull requests, issues opened.
-
----
-
-## Free Plan Limitations (thatwonguy-agent org)
-
-| Feature | Free Plan |
-|---------|-----------|
-| GitHub Pages | **Public repos only** |
-| Org-level secrets | **Public repos only** — private repos use repo-level secrets |
-| Actions minutes | 2,000 min/month (private) / unlimited (public) |
-| Template repos | ✅ All plans |
-| Creating repos from template | ✅ All plans |
-
-**Implication:** If a repo is private, the deploy step skips automatically. Use public repos for GitHub Pages sites.
-
----
-
-## Creating Repos from This Template
-
-```http
-POST https://api.github.com/repos/[ORG_NAME]/agent-template/generate
-Authorization: Bearer <GH_TOKEN>
-Content-Type: application/json
-
-{
-  "owner": "[ORG_NAME]",
-  "name": "new-repo-name",
-  "private": false,
-  "include_all_branches": false
-}
-```
-
-Mark this repo as a template in GitHub Settings → check "Template repository".
-
----
-
-## Org-Level Secrets
-
-Set in: `github.com/organizations/[ORG_NAME]/settings/secrets/actions`
-Visibility: **All repositories**
-
-| Secret | Purpose |
-|--------|---------|
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
-| `TELEGRAM_CHAT_ID` | Telegram chat ID |
-| `STRIPE_KEY` | Stripe API key |
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_KEY` | Supabase API key |
-| `GMAIL_USER` | Gmail address |
-| `GMAIL_APP_PASS` | Gmail app password |
-| `POSTHOG_KEY` | PostHog API key |
-| `POSTHOG_API_KEY` | PostHog API key |
-| `GH_TOKEN` | GitHub PAT |
-
-> **Note:** On the free plan, org secrets are only accessible by **public** repos.
-> For private repos, set the same secrets at the repo level.
-
----
-
-## Structure
-
-```
-.
-├── spec/
-│   ├── GOAL.md           ← agent reads first, always
-│   ├── SUCCESS.md        ← CI checks these criteria
-│   ├── CONSTRAINTS.md    ← hard rules CI enforces
-│   ├── ARCHITECTURE.md   ← stack + required files list
-│   └── STATUS.md         ← auto-updated by CI after deploy
-├── .github/
-│   └── workflows/
-│       └── ci.yml        ← full pipeline (spec → build → deploy → notify)
-├── scripts/
-│   ├── validate-architecture.py  ← reads ARCHITECTURE.md, verifies files exist
-│   ├── validate-constraints.py   ← checks for secrets, .env, node_modules, .gitignore
-│   └── setup-org-secrets.js      ← helper to configure org secrets
-├── .gitignore
-└── README.md             ← you are here (human docs only)
-```
-
----
-
-## Git Identity
-
-Set per deployment on the local agent machine:
+### 1. Clone the Repository
 
 ```bash
-git config --global user.name "[AGENT_NAME]"
-git config --global user.email "[AGENT_EMAIL]"
+git clone https://github.com/thatwonguy-agent/test-dashboard.git
+cd test-dashboard
 ```
+
+### 2. Run with Docker
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+```
+
+### 3. Access the Dashboard
+
+- **Frontend:** http://localhost:3000
+- **Backend API:** http://localhost:8080
+
+### 4. Login
+
+**Default Credentials:**
+- Username: `admin`
+- Password: `demo123`
+
+## 📁 Project Structure
+
+```
+test-dashboard/
+├── backend/              # Node.js Express API
+│   ├── server.js        # Main application
+│   ├── package.json     # Dependencies
+│   └── Dockerfile       # Backend container
+├── frontend/            # React SPA
+│   ├── src/            # React components
+│   ├── public/         # Static assets
+│   ├── package.json    # Dependencies
+│   └── Dockerfile      # Frontend container
+├── spec/               # Project specifications
+│   ├── GOAL.md         # Project goal
+│   ├── SUCCESS.md      # Success metrics
+│   ├── CONSTRAINTS.md  # Technical constraints
+│   ├── ARCHITECTURE.md # System architecture
+│   └── STATUS.md       # Auto-updated by CI
+├── scripts/            # Utility scripts
+│   ├── validate-architecture.js
+│   └── validate-constraints.js
+├── docker-compose.yml  # Service orchestration
+├── .github/            # GitHub Actions workflows
+│   └── workflows/
+│       └── ci.yml      # CI/CD pipeline
+└── README.md          # This file
+```
+
+## 🧪 Testing
+
+### Local Testing
+
+```bash
+# Backend
+cd backend
+npm install
+npm test
+
+# Frontend
+cd frontend
+npm install
+npm run build
+```
+
+### Docker Testing
+
+```bash
+# Build and run
+docker-compose build
+docker-compose up
+
+# Test health endpoints
+curl http://localhost:8080/api/health
+curl http://localhost:3000
+
+# Cleanup
+docker-compose down -v
+```
+
+## 🔒 Security
+
+- ✅ No hardcoded secrets
+- ✅ JWT_SECRET from environment variables
+- ✅ .env files excluded from git
+- ✅ Security scans in CI/CD
+- ✅ Password hashing with bcryptjs
+
+## 📊 Sample Data
+
+The dashboard includes realistic sample data:
+- **Total Users:** 1,247
+- **Active Users:** 892
+- **Revenue:** $45,678
+- **Conversion Rate:** 3.2%
+- **Page Views:** 89,234
+
+## 🔄 CI/CD Pipeline
+
+This repository uses a spec-driven development workflow:
+
+1. **validate-spec** - Ensures spec/ directory is complete
+2. **security-scan** - Scans for exposed secrets
+3. **backend-tests** - Runs backend tests
+4. **frontend-build** - Builds React app
+5. **docker-build** - Tests Docker containers
+6. **update-status** - Auto-updates spec/STATUS.md
+
+**View CI/CD Status:** https://github.com/thatwonguy-agent/test-dashboard/actions
+
+## 📝 Development Workflow
+
+### 1. Read spec/GOAL.md First
+
+Always start by reading the project goal before making changes.
+
+### 2. Create Feature Branch
+
+```bash
+git checkout -b feature/description
+```
+
+### 3. Make Changes
+
+Write code, update docs, ensure tests pass.
+
+### 4. Push & Create PR
+
+```bash
+git push origin feature/description
+gh pr create --base main --head feature/description
+```
+
+### 5. Wait for CI Feedback
+
+- Check Gmail for CI pass/fail notifications
+- If failed: read error, fix, push again
+- If passed: merge the PR
+
+### 6. Monitor spec/STATUS.md
+
+CI automatically updates this file after successful deployments.
+
+## 🐛 Troubleshooting
+
+### Database Issues
+
+```bash
+# Reset database volume
+docker-compose down -v
+docker-compose up -d
+```
+
+### Build Failures
+
+```bash
+# Clean build
+docker-compose down
+docker-compose build --no-cache
+docker-compose up
+```
+
+### Port Conflicts
+
+```bash
+# Check what's using ports
+lsof -i :3000
+lsof -i :8080
+
+# Kill processes
+kill -9 <PID>
+```
+
+## 📚 Documentation
+
+- **GOAL.md** - Project objectives and success criteria
+- **ARCHITECTURE.md** - System design and components
+- **TESTING.md** - Comprehensive testing guide
+- **CI-CD-SUMMARY.md** - Pipeline documentation
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run validation scripts
+5. Submit a pull request
+
+## 📄 License
+
+MIT License - see LICENSE file for details
 
 ---
 
-*Generic agent template — adapt per org. See `spec/AGENT-INSTRUCTIONS.md`.*
+**Built by Omar Agent** - AI assistant on local sovereign stack 🎯
+
+*Following spec-driven development workflow from agent-template*
