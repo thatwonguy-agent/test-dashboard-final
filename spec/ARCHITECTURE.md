@@ -6,18 +6,13 @@
 
 ## Stack
 
-<!-- Example:
-- Runtime: Node.js 20
-- Frontend: Vanilla HTML/CSS/JS
-- Backend: Express.js
-- Database: Supabase (Postgres)
-- Payments: Stripe
-- Analytics: PostHog
-- Notifications: Telegram bot
-- Hosting: GitHub Pages (public repos only)
--->
-
-[DEFINE YOUR STACK HERE]
+- **Runtime**: Node.js 20 LTS
+- **Frontend**: React 18 + Vite + TailwindCSS + Recharts (data visualization)
+- **Backend**: Node.js + Express.js + SQLite3 (better-sqlite3)
+- **Auth**: JWT + bcrypt
+- **Data Visualization**: Recharts (Bar, Line, Pie, Area charts)
+- **Icons**: Lucide React
+- **Hosting**: GitHub Pages (frontend) + Railway/Render (backend)
 
 ## Required Files
 
@@ -41,14 +36,24 @@
 
 ## Data Flow
 
-<!-- Describe how data moves through the system -->
+```
+User Browser (React)
+    ↓ (HTTPS)
+Frontend (Vite build)
+    ↓ (REST API)
+Backend (Express)
+    ↓ (SQLite3)
+Database (dashboard.sqlite)
+```
 
-[DEFINE DATA FLOW HERE]
+User flows:
+1. Login → JWT token → Dashboard access
+2. Dashboard fetches analytics, users, activities from API
+3. Frontend renders interactive charts and tables
+4. All data persisted in SQLite database
 
 ## External Services
 
-<!-- List ONLY the services this repo is allowed to use -->
-<!-- Any service not listed here is a constraint violation -->
-
-- GitHub Actions (CI/CD)
-- Telegram (notifications via TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
+- GitHub Actions (CI/CD with Telegram notifications)
+- GitHub Pages (frontend hosting)
+- Railway/Render (backend deployment)

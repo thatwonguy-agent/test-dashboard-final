@@ -188,7 +188,7 @@ const authenticate = (req, res, next) => {
 // API Routes
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
     timestamp: new Date().toISOString(),
@@ -197,7 +197,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // Login
-app.post('/api/login', (req, res) => {
+app.post('/login', (req, res) => {
   try {
     const { username, password } = req.body;
     log(`Login attempt for user: ${username}`);
@@ -227,7 +227,7 @@ app.post('/api/login', (req, res) => {
 });
 
 // Register
-app.post('/api/register', (req, res) => {
+app.post('/register', (req, res) => {
   try {
     const { username, email, password } = req.body;
     log(`Registration attempt: ${username}`);
@@ -249,7 +249,7 @@ app.post('/api/register', (req, res) => {
 });
 
 // Get analytics
-app.get('/api/analytics', authenticate, (req, res) => {
+app.get('/analytics', authenticate, (req, res) => {
   try {
     const analytics = db.prepare('SELECT * FROM analytics').all();
     res.json(analytics);
@@ -260,7 +260,7 @@ app.get('/api/analytics', authenticate, (req, res) => {
 });
 
 // Get users
-app.get('/api/users', authenticate, (req, res) => {
+app.get('/users', authenticate, (req, res) => {
   try {
     const users = db.prepare('SELECT id, username, email, role, created_at FROM users').all();
     res.json(users);
@@ -271,7 +271,7 @@ app.get('/api/users', authenticate, (req, res) => {
 });
 
 // Get activities
-app.get('/api/activities', authenticate, (req, res) => {
+app.get('/activities', authenticate, (req, res) => {
   try {
     const activities = db.prepare(`
       SELECT a.*, u.username 
@@ -288,7 +288,7 @@ app.get('/api/activities', authenticate, (req, res) => {
 });
 
 // Get dashboard summary
-app.get('/api/dashboard', authenticate, (req, res) => {
+app.get('/dashboard', authenticate, (req, res) => {
   try {
     const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
     const totalActivities = db.prepare('SELECT COUNT(*) as count FROM activities').get().count;
@@ -301,8 +301,8 @@ app.get('/api/dashboard', authenticate, (req, res) => {
   }
 });
 
-// Export analytics to CSV (NEW FEATURE)
-app.get('/api/export/analytics', authenticate, (req, res) => {
+// Export analytics to CSV
+app.get('/export/analytics', authenticate, (req, res) => {
   try {
     log('Export analytics requested');
     

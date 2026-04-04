@@ -4,7 +4,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area, X
 import { LayoutDashboard, Users, Activity, Settings, LogOut, UserPlus, TrendingUp, DollarSign, Eye, Clock, Zap, Menu, X, Sun, Moon } from 'lucide-react';
 import axios from 'axios';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080/api';
+const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 
 // Login Component
 function Login({ onLogin }) {
@@ -99,10 +99,10 @@ function Dashboard({ user, onLogout }) {
     const token = localStorage.getItem('token');
     try {
       const [analyticsRes, usersRes, activitiesRes, summaryRes] = await Promise.all([
-        axios.get(`${API_URL}/analytics`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API_URL}/users`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API_URL}/activities`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API_URL}/dashboard`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/api/analytics`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/api/users`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/api/activities`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API_URL}/api/dashboard`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setAnalytics(analyticsRes.data);
       setUsers(usersRes.data);
